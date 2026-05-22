@@ -1,74 +1,184 @@
-# GX Update Server
+<a id="readme-top"></a>
 
-一个可复用的 App 自动更新 / 版本封禁 / 更新包分发服务端，基于 Go + Gin + GORM + SQLite。
+[![Go][go-shield]][go-url]
+[![Gin][gin-shield]][gin-url]
+[![GORM][gorm-shield]][gorm-url]
+[![SQLite][sqlite-shield]][sqlite-url]
 
-适合不上架应用商店、自己分发 APK / 桌面端安装包 / Flutter 包的项目。一个服务可以管理多个 App 项目、多平台、多渠道。
+<br />
+<div align="center">
+  <h3 align="center">gx-updater</h3>
 
-## 核心能力
+  <p align="center">
+    A reusable app auto-update / version blocking / package distribution server.
+    <br />
+    Built with Go + Gin + GORM + SQLite. One service, multiple apps, platforms, and channels.
+  </p>
+</div>
 
-- 多项目：通过 `app_id` 区分不同 App。
-- 多平台：`android` / `windows` / `macos` / `linux` / `ios` 等都可以。
-- 多渠道：`stable` / `beta` / `dev`。
-- 多架构：`universal` / `arm64-v8a` / `x86_64` 等。
-- 自动检测更新：客户端提交当前版本，服务端返回最新版本。
-- 强制更新：某个 release 可设置 `force=true`。
-- 旧版本封禁：可以设置某平台某渠道最低允许版本号。
-- 精确封禁：可以封禁单个 `version_code`。
-- 灰度发布：release 可设置 `rollout_percent`。
-- 更新包分发：支持直接上传文件，也支持外链包。
-- 请求签名：客户端调用 `/api/v1/check` 必须使用 HMAC-SHA256 签名。
-- 更新清单签名：服务端使用 Ed25519 私钥签名更新清单，客户端内置公钥校验。
-- 短时下载 token：更新包下载链接默认带过期 token。
+## Table of Contents
 
-## 重要安全说明
+- [About The Project](#about-the-project)
+- [Built With](#built-with)
+- [Features](#features)
+- [Project Structure](#project-structure)
+- [Getting Started](#getting-started)
+- [Configuration](#configuration)
+- [API Reference](#api-reference)
+- [Release Workflow](#release-workflow)
+- [Docker Deployment](#docker-deployment)
+- [Client Implementation](#client-implementation)
+- [Database Schema](#database-schema)
 
-客户端内置的 `client_secret` 可以被逆向提取，所以它只能用于防刷、防普通抓包重放，不能当成绝对安全边界。
+## About The Project
 
-真正关键的是更新清单和安装包校验：
+GX Update Server is a Go-based update management backend designed for self-distributed apps (APK, desktop packages, Flutter bundles) that are not published on app stores.
 
-1. 服务端返回包的 `sha256`。
-2. 服务端用 Ed25519 私钥签名清单。
-3. 客户端内置 Ed25519 公钥。
-4. 客户端下载包后先校验 SHA256，再校验清单签名。
-5. 校验失败就拒绝安装。
+Key design decisions:
 
-## 快速启动
+- **Config-file-driven** — no admin web UI or management API. All project data lives in `data/config/apps.yaml`. Edit the file, hit the reload endpoint or type `reload` in the console. No restart needed.
+- **HMAC request signing** — client requests to `/api/v1/check` are signed with a per-project `client_secret`. Nonces prevent replay attacks.
+- **Ed25519 manifest signing** — the server signs every update manifest with a per-project Ed25519 private key. The client verifies with the baked-in public key before installing.
+- **Short-lived download tokens** — package download URLs carry an expiring HMAC token, preventing hotlinking.
+- **SQLite** — zero-dependency database. No Postgres or MySQL needed for personal deployments.
 
-```bash
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Built With
+
+- [Go](https://go.dev/) 1.23
+- [Gin](https://github.com/gin-gonic/gin) — HTTP framework
+- [GORM](https://gorm.io/) — ORM
+- [SQLite](https://www.sqlite.org/) via [go-sqlite3](https://github.com/mattn/go-sqlite3)
+- [yaml.v3](https://gopkg.in/yaml.v3) — config parsing
+- [Ed25519](https://pkg.go.dev/crypto/ed25519) — manifest signing
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Features
+
+- Multi-app — distinguish projects by `app_id`
+- Multi-platform — `android`, `windows`, `macos`, `linux`, `ios`, etc.
+- Multi-channel — `stable`, `beta`, `dev`
+- Multi-arch — `universal`, `arm64-v8a`, `x86_64`, etc.
+- Auto update detection — client submits current version, server returns latest
+- Forced updates — per-release `force` flag or `min_supported_code` threshold
+- Version blocking — set minimum allowed version per platform/channel, or block specific version codes
+- Staged rollout — per-release `rollout_percent` (0–100)
+- Package delivery — local file serving or external URL redirect
+- Request signing — HMAC-SHA256 client authentication
+- Manifest signing — Ed25519-signed update manifests
+- Download tokens — expiring HMAC tokens for package URLs
+- Config hot-reload — console `reload` command or `POST /-/reload`, no restart
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Project Structure
+
+```text
+gx_update_server/
+├── cmd/
+│   ├── server/main.go         # HTTP server entrypoint
+│   └── genkeys/main.go        # Key generation CLI
+├── examples/
+│   ├── system.example.yaml    # System config template
+│   └── apps.example.yaml      # Project config template
+├── internal/
+│   ├── appconfig/             # YAML config loading + DB sync
+│   ├── config/                # System config (YAML + env overrides)
+│   ├── db/                    # SQLite open + auto-migrate
+│   ├── handlers/              # Public API handlers
+│   ├── middleware/             # Client HMAC auth middleware
+│   ├── models/                # GORM models
+│   ├── router/                # Route registration
+│   ├── security/              # HMAC, Ed25519, download tokens
+│   └── versioning/            # version → version_code conversion
+├── scripts/                   # Client signing examples
+├── data/                      # Runtime data (gitignored)
+│   └── config/
+│       ├── system.yaml        # Actual system config (secrets)
+│       └── apps.yaml          # Actual project config (secrets)
+├── storage/                   # Package files (gitignored)
+├── Dockerfile
+├── .dockerignore
+├── .gitignore
+├── docker-compose.yml
+├── go.mod
+├── go.sum
+└── README.md
+```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Getting Started
+
+### Prerequisites
+
+- Go 1.23+
+- GCC (required by go-sqlite3 CGO driver)
+
+Check your environment:
+
+```sh
+go version
+```
+
+### Installation
+
+```sh
+git clone <repo-url>
 cd gx_update_server
 
-# 1. 复制系统配置模板
+# Copy config templates
 cp examples/system.example.yaml data/config/system.yaml
+cp examples/apps.example.yaml  data/config/apps.yaml
 
-# 2. 生成密钥
+# Generate keys for your project
 go run ./cmd/genkeys
 
-# 3. 复制项目配置模板
-cp examples/apps.example.yaml data/config/apps.yaml
-# 把 genkeys 输出的密钥填入 apps.yaml
+# Edit data/config/apps.yaml — paste the generated keys
 
-# 4. 启动服务
+# Edit data/config/system.yaml — set public_base_url and secrets
+
+go mod tidy
 go run ./cmd/server
 ```
 
-健康检查：
+### Health Check
 
-```bash
+```sh
 curl http://127.0.0.1:8080/healthz
+# → {"status":"ok"}
 ```
 
-## 配置文件
+### Hot Reload
 
-| 位置 | 说明 |
-|---|---|
-| `examples/system.example.yaml` | 系统配置模板（可提交 git） |
-| `examples/apps.example.yaml` | 项目配置模板（可提交 git） |
-| `data/config/system.yaml` | 实际系统配置（含密钥，不提交 git） |
-| `data/config/apps.yaml` | 实际项目配置（含密钥、sha256，不提交 git） |
+After editing `data/config/apps.yaml`, trigger a reload without restarting:
+
+```sh
+# Option A: type in the server console
+reload
+
+# Option B: HTTP call from another terminal
+curl -X POST http://127.0.0.1:8080/-/reload
+```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Configuration
+
+All config files live under `data/config/`. Template files live under `examples/` and are safe to commit.
+
+| File | Purpose | Committed? |
+|---|---|---|
+| `examples/system.example.yaml` | System config template | Yes |
+| `examples/apps.example.yaml` | Project config template | Yes |
+| `data/config/system.yaml` | Actual system config (secrets) | No |
+| `data/config/apps.yaml` | Actual project config (secrets) | No |
 
 ### system.yaml
 
-系统运行参数，参考 `examples/system.example.yaml`：
+Server runtime settings. Env vars take priority over file values.
 
 ```yaml
 addr: ":8080"
@@ -81,10 +191,8 @@ client_clock_skew_seconds: 300
 download_token_ttl_seconds: 900
 ```
 
-环境变量优先级高于 system.yaml：
-
-| 环境变量 | system.yaml 字段 | 默认值 |
-|---|---|---:|
+| Env Var | YAML Field | Default |
+|---|---|---|
 | `UPDATE_SYSTEM_CONFIG` | — | `data/config/system.yaml` |
 | `UPDATE_SERVER_ADDR` | `addr` | `:8080` |
 | `UPDATE_DB_PATH` | `db_path` | `data/update.db` |
@@ -95,17 +203,78 @@ download_token_ttl_seconds: 900
 | `UPDATE_CLIENT_CLOCK_SKEW_SECONDS` | `client_clock_skew_seconds` | `300` |
 | `UPDATE_DOWNLOAD_TOKEN_TTL_SECONDS` | `download_token_ttl_seconds` | `900` |
 
-## 项目管理
+### apps.yaml
 
-服务端通过 `data/config/apps.yaml` 配置文件管理所有项目和版本。
+Defines projects, releases, policies, and blocked versions. See `examples/apps.example.yaml` for a complete example.
 
-### 生成密钥
+```yaml
+projects:
+  - app_id: me.cubevlmu.class_tool
+    name: Class Tool
+    enabled: true
+    client_secret: "base64-32-random-bytes"
+    ed25519_public_key: "base64-ed25519-pub"
+    ed25519_private_key: "base64-ed25519-priv"
 
-```bash
+    policies:
+      - platform: windows
+        channel: stable
+        min_allowed_version: "0.8.1"
+        message: "Your version is too old. Please update."
+        maintenance: false
+        maintenance_msg: ""
+
+    releases:
+      - version: "0.8.1"
+        platform: windows
+        arch: x64
+        channel: stable
+        title: "0.8.1 Windows Update"
+        changelog: |
+          - Performance improvements
+          - Bug fixes
+        min_supported_code: 1
+        force: true
+        enabled: true
+        rollout_percent: 100
+        package:
+          file_name: "class_tool_0.8.1_windows_x64.zip"
+          storage_path: "me.cubevlmu.class_tool/windows/stable/x64/0.8.1/class_tool_0.8.1_windows_x64.zip"
+          external_url: ""
+          size: 12345678
+          sha256: "abc123..."
+
+    blocked_versions:
+      - platform: windows
+        channel: stable
+        version: "0.8.0"
+        reason: "Version 0.8.0 is no longer supported. Please update."
+        enabled: true
+```
+
+### Version Code Auto-Generation
+
+`version_code` is optional. When omitted, the server derives it from `version`:
+
+| version | version_code |
+|---|---|
+| `0.8.0` | `8000` |
+| `0.8.1` | `8001` |
+| `0.10.0` | `10000` |
+| `1.0.0` | `1000000` |
+| `1.2.3` | `1002003` |
+
+Formula: `major × 1,000,000 + minor × 1,000 + patch`
+
+`min_allowed_version` and `blocked_versions.version` support the same auto-conversion. If `version_code` is explicitly set (>0), it takes precedence.
+
+### Generating Keys
+
+```sh
 go run ./cmd/genkeys
 ```
 
-输出 YAML 片段，复制到 `data/config/apps.yaml` 中：
+Output:
 
 ```yaml
 app_id: com.example.app
@@ -116,168 +285,77 @@ ed25519_public_key: "..."
 ed25519_private_key: "..."
 ```
 
-### apps.yaml 结构
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-参考 `examples/apps.example.yaml`：
+## API Reference
 
-```yaml
-projects:
-  - app_id: me.cubevlmu.class_tool
-    name: Class Tool
-    enabled: true
-    client_secret: "..."
-    ed25519_public_key: "..."
-    ed25519_private_key: "..."
+### POST /api/v1/check
 
-    policies:
-      - platform: windows
-        channel: stable
-        min_allowed_version: "0.8.1"
-        message: "版本过低，请更新客户端版本。"
-        maintenance: false
+Check for updates. Requires HMAC-SHA256 client authentication.
 
-    releases:
-      - version: "0.8.1"
-        platform: windows
-        arch: x64
-        channel: stable
-        title: "0.8.1 Windows 更新"
-        changelog: |
-          - 测试 Windows 自动更新
-        min_supported_code: 1
-        force: true
-        enabled: true
-        rollout_percent: 100
-        package:
-          file_name: "class_tool_0.8.1_windows_x64.zip"
-          storage_path: "me.cubevlmu.class_tool/windows/stable/x64/0.8.1/class_tool_0.8.1_windows_x64.zip"
-          external_url: ""
-          size: 12345678
-          sha256: "..."
-
-    blocked_versions:
-      - platform: windows
-        channel: stable
-        version: "0.8.0"
-        reason: "已停止支持，请更新后继续使用。"
-        enabled: true
-```
-
-#### 版本号自动转换
-
-`version_code` 可以不手写，服务端自动根据 `version` 生成：
-
-| version | version_code |
-|---|---:|
-| `0.8.0` | `8000` |
-| `0.8.1` | `8001` |
-| `0.9.0` | `9000` |
-| `0.10.0` | `10000` |
-| `1.0.0` | `1000000` |
-| `1.2.3` | `1002003` |
-
-规则：`major * 1_000_000 + minor * 1_000 + patch`。
-
-`min_allowed_version` 和 `blocked_versions.version` 也同样支持自动转换。
-如果显式写 `version_code` > 0，则优先使用手写值。
-```
-
-### 发布新版本流程
-
-```bash
-# 1. 放安装包
-mkdir -p storage/com.example.class_tool/android/stable/universal/1.2.0
-cp app-release.apk storage/com.example.class_tool/android/stable/universal/1.2.0/class_tool_1.2.0.apk
-
-# 2. 计算 sha256
-# Windows PowerShell:
-Get-FileHash .\storage\com.example.class_tool\android\stable\universal\1.2.0\class_tool_1.2.0.apk -Algorithm SHA256
-
-# Linux/macOS:
-sha256sum ./storage/com.example.class_tool/android/stable/universal/1.2.0/class_tool_1.2.0.apk
-
-# 3. 修改 data/config/apps.yaml 的 releases 列表，填入 sha256 和 size
-
-# 4. 重载配置（无需重启，控制台输入 reload 或 curl）
-curl -X POST http://127.0.0.1:8080/-/reload
-```
-
-## 客户端检测更新接口
-
-### 请求
+**Headers:**
 
 ```http
-POST /api/v1/check
-X-App-Id: com.example.class_tool
-X-Timestamp: 1779430000
+X-App-Id: com.example.app
+X-Timestamp: 1715870000
 X-Nonce: random-uuid
-X-Signature: base64(hmac_sha256(client_secret, payload))
+X-Signature: base64(hmac-sha256(client_secret, signing_payload))
 Content-Type: application/json
 ```
 
-Body 示例：
-
-```json
-{
-  "app_id": "com.example.class_tool",
-  "platform": "android",
-  "arch": "universal",
-  "channel": "stable",
-  "version": "1.0.0",
-  "version_code": 100,
-  "client_id": "device-or-install-id",
-  "install_id": "install-uuid",
-  "os_version": "Android 14"
-}
-```
-
-签名 payload 规则：
+**Signing payload:**
 
 ```text
 METHOD + "\n" + PATH + "\n" + TIMESTAMP + "\n" + NONCE + "\n" + SHA256_HEX(RAW_BODY)
 ```
 
-例如：
+> Sign the raw JSON bytes actually sent. Do not sign a hand-written JSON string and send a differently-encoded body.
 
-```text
-POST
-/api/v1/check
-1779430000
-random-uuid
-<body_sha256_hex>
+**Request body:**
+
+```json
+{
+  "app_id": "com.example.app",
+  "platform": "windows",
+  "arch": "x64",
+  "channel": "stable",
+  "version": "0.8.0",
+  "version_code": 8000,
+  "client_id": "device-or-install-id",
+  "install_id": "install-uuid",
+  "os_version": "Windows 11"
+}
 ```
 
-注意：必须对实际发送的 JSON 原始字节做 SHA256。不要手写一个 JSON 字符串签名，然后又用另一个 JSON 编码结果发送。
-
-### 响应
+**Response:**
 
 ```json
 {
   "request_id": "uuid",
-  "server_time": 1779430001,
+  "server_time": 1715870001,
   "legal": {
-    "allowed": true,
-    "code": "ok",
-    "message": "ok"
+    "allowed": false,
+    "code": "version_too_old",
+    "message": "Your version is too old. Please update."
   },
   "update": {
     "available": true,
-    "update_type": "recommended",
-    "version": "1.2.0",
-    "version_code": 120,
-    "platform": "android",
-    "arch": "universal",
+    "update_type": "force",
+    "version": "0.8.1",
+    "version_code": 8001,
+    "platform": "windows",
+    "arch": "x64",
     "channel": "stable",
-    "title": "1.2.0 更新",
-    "changelog": "优化课程表小组件；修复下一节课程显示错误。",
-    "min_supported_code": 100,
-    "force": false,
+    "title": "0.8.1 Windows Update",
+    "changelog": "Performance improvements\nBug fixes",
+    "min_supported_code": 1,
+    "force": true,
     "package": {
       "id": 1,
-      "file_name": "app-release.apk",
+      "file_name": "class_tool_0.8.1_windows_x64.zip",
       "download_url": "https://update.example.com/api/v1/packages/1/download?token=...",
       "size": 12345678,
-      "sha256": "..."
+      "sha256": "abc123..."
     },
     "manifest_signature": "base64-ed25519-signature",
     "created_at": "2026-05-22T00:00:00Z"
@@ -285,11 +363,102 @@ random-uuid
 }
 ```
 
-`legal.allowed=false` 时，客户端应阻止进入主功能，并提示 `legal.message`。如果同时有 `update.update_type=force`，应引导用户更新。
+- `legal.allowed = false` — client should block usage and show `legal.message`.
+- `update.update_type = "force"` — client should show a non-dismissable update dialog.
+- `update.update_type = "recommended"` — client should show a dismissable update dialog.
+- `update.available = false` — no update available, proceed normally.
 
-## 客户端验签规则
+### GET /api/v1/packages/:package_id/download
 
-服务端签名的 canonical payload 是：
+Download a package file. Requires a valid `?token=` query parameter from the check response.
+
+```sh
+curl -O "https://update.example.com/api/v1/packages/1/download?token=..."
+```
+
+### GET /healthz
+
+Health check. No auth required.
+
+### POST /-/reload
+
+Hot-reload `apps.yaml` from disk and re-sync to the database. No auth required.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Release Workflow
+
+```sh
+# 1. Place the package file
+mkdir -p storage/me.cubevlmu.class_tool/windows/stable/x64/0.8.1
+cp app-release.zip storage/me.cubevlmu.class_tool/windows/stable/x64/0.8.1/class_tool_0.8.1_windows_x64.zip
+
+# 2. Compute SHA256
+# Linux / macOS:
+sha256sum storage/me.cubevlmu.class_tool/windows/stable/x64/0.8.1/class_tool_0.8.1_windows_x64.zip
+
+# Windows PowerShell:
+Get-FileHash storage\me.cubevlmu.class_tool\windows\stable\x64\0.8.1\class_tool_0.8.1_windows_x64.zip -Algorithm SHA256
+
+# 3. Edit data/config/apps.yaml — add/update the release entry with sha256 and size
+
+# 4. Hot-reload (no restart)
+curl -X POST http://127.0.0.1:8080/-/reload
+```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Docker Deployment
+
+```sh
+# 1. Clone and configure
+git clone <repo-url>
+cd gx_update_server
+cp examples/system.example.yaml data/config/system.yaml
+cp examples/apps.example.yaml  data/config/apps.yaml
+# Edit both YAML files with your actual keys and settings
+
+# 2. Build and start
+docker compose build
+docker compose up -d
+```
+
+**docker-compose.yml** mounts `data/` and `storage/` as volumes:
+
+```yaml
+services:
+  update-server:
+    build: .
+    container_name: gx-update-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      UPDATE_SYSTEM_CONFIG: "/app/data/config/system.yaml"
+      UPDATE_APPS_CONFIG: "/app/data/config/apps.yaml"
+      UPDATE_PUBLIC_BASE_URL: "https://update.example.com"
+    volumes:
+      - ./data:/app/data
+      - ./storage:/app/storage
+```
+
+**Hot-reload inside Docker:**
+
+```sh
+docker compose exec update-server wget -qO- http://127.0.0.1:8080/-/reload
+```
+
+Recommended: place behind Nginx or Caddy with HTTPS enabled.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Client Implementation
+
+### Manifest Verification
+
+The server signs a canonical manifest payload with Ed25519. The client must verify the signature before installing.
+
+**Canonical payload:**
 
 ```text
 gx-update-manifest-v1
@@ -306,53 +475,44 @@ force=<true|false>
 min_supported_code=<min_supported_code>
 ```
 
-客户端用配置文件中的 `ed25519_public_key` 校验 `manifest_signature`。
+**Client-side steps:**
 
-下载完成后，还要计算文件 SHA256，与响应里的 `package.sha256` 完全一致才允许安装。
+1. Request `/api/v1/check` with HMAC signature.
+2. If the request fails, allow entry but show "update check failed".
+3. If `legal.allowed = false`, block usage and show `legal.message`.
+4. If `update.available = false`, proceed normally.
+5. If `update.update_type = "recommended"`, show a dismissable update dialog.
+6. If `update.update_type = "force"`, show a non-dismissable update dialog.
+7. Download the package.
+8. Verify SHA256 of the downloaded file against `package.sha256`.
+9. Verify `manifest_signature` using the baked-in `ed25519_public_key`.
+10. If both pass, invoke the platform installer.
 
-## 服务器部署
+### Security Notes
 
-```bash
-# 1. clone 仓库到服务器
-git clone <repo> && cd gx_update_server
+- `client_secret` is embedded in the client binary. It can be extracted via reverse engineering. Use it only for rate-limiting and basic anti-replay, not as a hard security boundary.
+- The real security comes from Ed25519 manifest signing + SHA256 verification. The client bakes in the public key and the package hash. An attacker who compromises the server cannot forge a valid manifest signature without the private key.
 
-# 2. 准备配置文件
-cp examples/system.example.yaml data/config/system.yaml
-cp examples/apps.example.yaml  data/config/apps.yaml
-# 编辑两个 yaml，填入密钥和 sha256
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-# 3. 打包镜像并启动
-docker compose build
-docker compose up -d
-```
+## Database Schema
 
-更新后热重载（无需重启容器）：
+| Table | Description |
+|---|---|
+| `projects` | App ID, name, HMAC secret, Ed25519 keypair |
+| `releases` | Version records with platform/arch/channel/rollout |
+| `packages` | File name, storage path, SHA256, size, external URL |
+| `version_policies` | Minimum allowed version, maintenance mode |
+| `blocked_versions` | Explicitly blocked version codes |
+| `request_nonces` | Anti-replay nonces with TTL |
 
-```bash
-docker compose exec update-server wget -qO- http://127.0.0.1:8080/-/reload
-```
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-生产环境建议放在 Nginx / Caddy 后面，并开启 HTTPS。
-
-## 数据库表
-
-- `projects`：项目、客户端 HMAC 密钥、Ed25519 公私钥。
-- `releases`：版本记录。
-- `packages`：安装包文件、SHA256、大小、外链。
-- `version_policies`：最低允许版本、维护模式。
-- `blocked_versions`：精确封禁某个版本号。
-- `request_nonces`：请求 nonce，防重放。
-
-## 推荐客户端逻辑
-
-1. App 启动后请求 `/api/v1/check`。
-2. 如果请求失败，不要直接崩溃；可以允许进入，但提示“更新检查失败”。
-3. 如果 `legal.allowed=false`，阻止继续使用。
-4. 如果 `update.available=false`，正常进入。
-5. 如果 `update.update_type=recommended`，弹出可跳过更新弹窗。
-6. 如果 `update.update_type=force`，弹出不可跳过更新弹窗。
-7. 下载更新包。
-8. 校验 SHA256。
-9. 校验 Ed25519 manifest signature。
-10. 调用平台安装逻辑。
-
+[go-shield]: https://img.shields.io/badge/Go-1.23-00ADD8?style=for-the-badge&logo=go&logoColor=white
+[go-url]: https://go.dev/
+[gin-shield]: https://img.shields.io/badge/Gin-HTTP%20Framework-008ECF?style=for-the-badge&logo=go&logoColor=white
+[gin-url]: https://github.com/gin-gonic/gin
+[gorm-shield]: https://img.shields.io/badge/GORM-ORM-00ADD8?style=for-the-badge&logo=go&logoColor=white
+[gorm-url]: https://gorm.io/
+[sqlite-shield]: https://img.shields.io/badge/SQLite-Database-003B57?style=for-the-badge&logo=sqlite&logoColor=white
+[sqlite-url]: https://www.sqlite.org/
