@@ -1,0 +1,8 @@
+addr: ":8080"
+db_path: "data/update.db"
+storage_dir: "storage"
+public_base_url: "http://127.0.0.1:8080"
+apps_config_path: "data/config/apps.yaml"
+download_token_secret: "replace-with-long-random-download-secret"
+client_clock_skew_seconds: 300
+download_token_ttl_seconds: 900

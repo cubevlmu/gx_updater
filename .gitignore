@@ -1,0 +1,23 @@
+# Database
+data/update.db
+data/*.db
+data/*.db-*
+
+# Configs with secrets
+data/config/system.yaml
+data/config/apps.yaml
+
+# Package storage
+storage/
+
+# IDE
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Binary
+update-server
+update-server.exe
+*.exe

@@ -1,0 +1,14 @@
+services:
+  update-server:
+    build: .
+    container_name: gx-update-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      UPDATE_SYSTEM_CONFIG: "/app/data/config/system.yaml"
+      UPDATE_APPS_CONFIG: "/app/data/config/apps.yaml"
+      UPDATE_PUBLIC_BASE_URL: "https://update.example.com"
+    volumes:
+      - ./data:/app/data
+      - ./storage:/app/storage

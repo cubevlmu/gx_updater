@@ -1,0 +1,41 @@
+projects:
+  - app_id: me.cubevlmu.class_tool
+    name: Class Tool
+    enabled: true
+    client_secret: "REPLACE_WITH_CLIENT_SECRET"
+    ed25519_public_key: "REPLACE_WITH_PUBLIC_KEY"
+    ed25519_private_key: "REPLACE_WITH_PRIVATE_KEY"
+
+    policies:
+      - platform: windows
+        channel: stable
+        min_allowed_version: "0.8.1"
+        message: "版本过低，请更新客户端版本。"
+        maintenance: false
+        maintenance_msg: ""
+
+    releases:
+      - version: "0.8.1"
+        platform: windows
+        arch: x64
+        channel: stable
+        title: "0.8.1 Windows 测试更新"
+        changelog: |
+          - 测试 Windows 自动更新
+        min_supported_code: 1
+        force: true
+        enabled: true
+        rollout_percent: 100
+        package:
+          file_name: "class_tool_0.8.1_windows_x64.zip"
+          storage_path: "me.cubevlmu.class_tool/windows/stable/x64/0.8.1/class_tool_0.8.1_windows_x64.zip"
+          external_url: ""
+          size: 12345678
+          sha256: "REPLACE_WITH_PACKAGE_SHA256"
+
+    blocked_versions:
+      - platform: windows
+        channel: stable
+        version: "0.8.0"
+        reason: "Windows 0.8.0 已停止支持，请更新后继续使用。"
+        enabled: true

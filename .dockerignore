@@ -1,0 +1,6 @@
+data/
+storage/
+.git/
+.idea/
+*.md
+*.exe
